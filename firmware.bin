@@ -1,0 +1,97 @@
+#include <WiFi.h>
+#include <WiFiClientSecure.h>
+#include <HTTPClient.h>
+#include "SPIFFS.h"
+
+// WiFi Credentials
+const char* ssid = "ESP8266";     // Replace with your WiFi SSID
+const char* password = "12345678"; // Replace with your WiFi password
+
+// File URL and Destination
+const char* fileURL = "https://toolsfairy.com/font-test/sample-bin-files/fontawesome-webfont.bin";
+const char* filename = "/downloaded_fontawesome.bin"; // SPIFFS Storage File
+
+// Buffer Size (Optimized for Speed)
+#define BUFFER_SIZE 4096  // 4KB buffer
+
+// Function Declaration
+void downloadFile(const char* url, const char* filename);
+
+void setup() {
+    Serial.begin(115200);
+    
+    // Connect to WiFi
+    WiFi.begin(ssid, password);
+    Serial.print("Connecting to WiFi");
+    while (WiFi.status() != WL_CONNECTED) {
+        delay(500);
+        Serial.print(".");
+    }
+    Serial.println("\nConnected!");
+
+    // Initialize SPIFFS
+    if (!SPIFFS.begin(true)) {
+        Serial.println("SPIFFS Mount Failed!");
+        return;
+    }
+
+    // Start Download
+    downloadFile(fileURL, filename);
+}
+
+void loop() {
+    // Empty - Download happens once in setup
+}
+
+// Function to Download File and Write to SPIFFS
+void downloadFile(const char* url, const char* filename) {
+    Serial.println("Starting file download...");
+
+    WiFiClientSecure client;
+    client.setInsecure(); // Ignore SSL verification (use only for testing)
+
+    HTTPClient http;
+    http.begin(client, url);
+
+    int httpCode = http.GET();
+    if (httpCode != HTTP_CODE_OK) {
+        Serial.printf("HTTP Request Failed, Error: %d\n", httpCode);
+        http.end();
+        return;
+    }
+
+    // Open SPIFFS File for Writing
+    File file = SPIFFS.open(filename, FILE_WRITE);
+    if (!file) {
+        Serial.println("Failed to open file for writing!");
+        http.end();
+        return;
+    }
+
+    // Read HTTP Stream and Write to SPIFFS
+    WiFiClient* stream = http.getStreamPtr();
+    uint8_t buffer[BUFFER_SIZE];
+    size_t sizeAvailable = http.getSize();  // Get file size (if available)
+
+    unsigned long startTime = millis();
+    size_t totalBytes = 0;
+
+    while (http.connected()) {
+        size_t bytesRead = stream->readBytes(buffer, min(sizeAvailable, (size_t)BUFFER_SIZE));
+        if (bytesRead > 0) {
+            file.write(buffer, bytesRead);
+            totalBytes += bytesRead;
+            Serial.printf("Downloaded: %d bytes\n", totalBytes);
+        } else {
+            break;
+        }
+    }
+
+    file.close();
+    http.end();
+
+    unsigned long elapsedTime = millis() - startTime;
+    float downloadSpeed = (totalBytes / 1024.0) / (elapsedTime / 1000.0);  // KB/s
+
+    Serial.printf("Download Completed! Total Bytes: %d, Speed: %.2f KBps\n", totalBytes, downloadSpeed);
+}
